@@ -706,7 +706,7 @@ def parse_mujoco_xml(filepath, blenderclass):
         for m in a.findall("mesh"):
             filename = m.get("file", None)
             if filename is not None:
-                mesh_files[os.path.splitext(filename)[0]] = os.path.join(stl_dir_full, filename)
+                mesh_files[os.path.splitext(os.path.split(filename)[-1])[0]] = os.path.join(stl_dir_full, filename)
 
     joints = []
     bodies = []
@@ -742,7 +742,7 @@ def parse_mujoco_xml(filepath, blenderclass):
         for geom in body.findall("geom"):
             geom_type = geom.get("type", "unknown")
             geom_class = geom.get("class", "unknown")
-            if geom_type == "mesh" and geom_class == "visual":
+            if (geom_type == "mesh" or geom_type == "unknown") and (geom_class == "visual" or geom_class == "visual_light" or geom_class == "visual_dark"):
                 geom_meshfile = geom.get("mesh", None)
                 if geom_meshfile is not None:
                     body_info.add_mesh_geom(MeshGeomInfo(mesh_files[os.path.splitext(geom_meshfile)[0]]))
