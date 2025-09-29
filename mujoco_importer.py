@@ -496,11 +496,12 @@ class JointInfo:
     JBL = 0.05 # joint bone length
     JBP = "POST" # joint bone is either PRE (before the body pose) or POST (after the body pose)
     ADD_FREEJOINT_BONE = False
-    def __init__(self, name, body, body_parent, axis):
+    def __init__(self, name, body, body_parent, axis, pos):
         self._name = name
         self._body = body
         self._body_parent = body_parent
         self._axis = axis
+        self._pos = pos
 
     def __repr__(self):
         return "JointInfo(name={})".format(self._name)
@@ -510,9 +511,9 @@ class JointInfo:
     
     def get_initial_pos(self, in_world=True):
         if in_world:
-            return self._body.get_initial_tf_in_world().origin()
+            return self._body.get_initial_tf_in_world().transform_point(self._pos)
         else:
-            return self._body.get_initial_tf_in_armature().origin()
+            return self._body.get_initial_tf_in_armature().transform_point(self._pos)
 
     def get_initial_axis(self, in_world=True):
         if in_world:
@@ -542,7 +543,7 @@ class MeshGeomInfo:
     def __init__(self, stl_path):
         self._stl_path = stl_path
     
-    def get_stl_path(self):
+    def get_path(self):
         return self._stl_path
 
 class BodyInfo:
@@ -695,12 +696,34 @@ class Scene:
 def parse_mujoco_xml(filepath, blenderclass):
     tree = ET.parse(filepath)
     root = tree.getroot()
+    dirname = os.path.dirname(filepath)
+
+    # process all includes
+    while root.findall(".//include"):
+        for parent in list(root.findall(".//include/..")):
+            to_remove = []
+            # Iterate again to get index
+            for i, element in enumerate(list(parent)):
+                if element.tag != "include":
+                    continue
+                if BLENDER:
+                    # print in blender console
+                    blenderclass.report({'INFO'}, "Including: " + element.get("file"))
+                else:
+                    print("Including: ", element.get("file"))
+                subtree = ET.parse(os.path.join(dirname, element.get("file")))
+                # Include children of the root element at the same place as the original include
+                for c in reversed(subtree.getroot()):
+                    parent.insert(i, c)
+                to_remove.append(element)
+            for e in to_remove:
+                parent.remove(e)
 
     # find all mesh files
     stl_dir = ""
     for c in root.findall("compiler"):
         stl_dir = c.get("meshdir", "")
-    stl_dir_full = os.path.join(os.path.dirname(filepath), stl_dir)
+    stl_dir_full = os.path.join(dirname, stl_dir)
     mesh_files = {}
     for a in root.findall("asset"):
         for m in a.findall("mesh"):
@@ -734,7 +757,8 @@ def parse_mujoco_xml(filepath, blenderclass):
         for joint in body.findall("joint"):
             joint_name = joint.get("name", "unnamed_joint")
             joint_axis = np.array([float(x) for x in joint.get("axis", "0 0 1").split()])
-            joint_info = JointInfo(joint_name, body_info, parent_body, joint_axis)
+            joint_pos = np.array([float(x) for x in joint.get("pos", "0 0 0").split()])
+            joint_info = JointInfo(joint_name, body_info, parent_body, joint_axis, joint_pos)
             body_info.set_joint(joint_info)
             joints.append(joint_info)
 
@@ -831,20 +855,29 @@ if BLENDER:
                     if bone_name is None:
                         self.report({'WARNING'}, "No bone for body {}".format(body_info.get_name()))
                         continue
-                    stl_full_path = geom_info.get_stl_path()
-                    if stl_full_path is not None:
-                        if os.path.exists(stl_full_path):
-                            # bpy.ops.import_mesh.stl(filepath=stl_full_path)
-                            bpy.ops.wm.stl_import(filepath=stl_full_path)
-                            imported_mesh = bpy.context.object
-                            imported_mesh.name = body_info.get_name() + "_mesh"
+                    geom_full_path = geom_info.get_path()
+                    if geom_full_path is None or not os.path.exists(geom_full_path):
+                        continue
 
-                            # Parent the mesh to the corresponding bone
-                            if bone_name in armature.data.bones:
-                                imported_mesh.parent = armature
-                                imported_mesh.parent_type = 'BONE'
-                                imported_mesh.parent_bone = bone_name
-                                imported_mesh.matrix_world = body_info.get_initial_tf_in_world().matrix().T
+                    if geom_full_path.lower().endswith(".stl"):
+                        # bpy.ops.import_mesh.stl(filepath=stl_full_path)
+                        bpy.ops.wm.stl_import(filepath=geom_full_path)
+                    elif geom_full_path.lower().endswith(".obj"):
+                        # bpy.ops.import_mesh.stl(filepath=stl_full_path)
+                        bpy.ops.wm.obj_import(filepath=geom_full_path)
+                    else:
+                        self.report({'WARNING'}, "Unkown mesh format {}".format(geom_full_path))
+                        continue
+
+                    imported_mesh = bpy.context.object
+                    imported_mesh.name = body_info.get_name() + "_mesh"
+
+                    # Parent the mesh to the corresponding bone
+                    if bone_name in armature.data.bones:
+                        imported_mesh.parent = armature
+                        imported_mesh.parent_type = 'BONE'
+                        imported_mesh.parent_bone = bone_name
+                        imported_mesh.matrix_world = body_info.get_initial_tf_in_world().matrix().T
 
             return {'FINISHED'}
 
