@@ -574,6 +574,7 @@ class BodyInfo:
         self._joints = []
         # end bone
         self._end_bone_name = None # not initialized
+        self._bones_generated = False
 
     def add_joint(self, joint_info):
         self._joints.append(joint_info)
@@ -610,6 +611,8 @@ class BodyInfo:
 
         no attempt is made to have the bones visually connect to one another
         """
+        self._bones_generated = True
+
         own_origin = self.get_initial_tf_in_world().origin() if JointInfo.ADD_FREEJOINT_BONE else self.get_initial_tf_in_armature().origin()
         if self.get_parent() is None: # no bones for worldbody
             self._end_bone_name = None
@@ -627,7 +630,7 @@ class BodyInfo:
                 return [parent_to_body_bone]
 
         # check init order
-        if self.get_parent()._end_bone_name is None:
+        if not self.get_parent()._bones_generated:
             raise ValueError("Child body's bones should be created after parent body's bones")
 
         # Fetch parent bone name for use when creating Armature heiarchy later
@@ -797,7 +800,8 @@ if BLENDER:
             armature = bpy.context.object
             armature.name = "MuJoCo_Armature"
             # move armature origin to the first freejoint position
-            armature.location = scene.get_freejoint_pose().origin()
+            if not JointInfo.ADD_FREEJOINT_BONE:
+                armature.location = scene.get_freejoint_pose().origin()
 
             bpy.ops.object.mode_set(mode='EDIT')
             edit_bones = armature.data.edit_bones
